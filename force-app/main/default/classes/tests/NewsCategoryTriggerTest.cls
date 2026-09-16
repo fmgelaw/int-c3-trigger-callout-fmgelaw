@@ -121,25 +121,65 @@ private class NewsCategoryTriggerTest {
         setup();
         // Get the business category
         News_Category__c category = [
-            SELECT Id, Sync__c 
-            FROM News_Category__c 
+            SELECT Id, Sync__c
+            FROM News_Category__c
             WHERE Name = 'Business'
         ];
-        
+
         Test.startTest();
-        
+
         // Update with no changes to Sync__c
         category.Name = 'Business Updated';
         update category;
-        
+
         Test.stopTest();
-        
+
         // Verify no articles were created
         List<Article__c> articles = [
-            SELECT Id 
-            FROM Article__c 
+            SELECT Id
+            FROM Article__c
             WHERE News_Category__c = :category.Id
         ];
         Assert.areEqual(0, articles.size(), 'Should not have created any articles');
     }
-} 
+
+    @IsTest
+    static void testInsertWithSyncTrueApiFailureCreatesErrorRecord() {
+        // Set up the mock to return a non-200 status, forcing NewsCategoryQueueable into its catch block
+        Test.setMock(HttpCalloutMock.class, NewsAPIMock.createErrorMock());
+
+        Test.startTest();
+
+        News_Category__c newCategory = new News_Category__c(
+            Name = 'Health',
+            Sync__c = true
+        );
+        insert newCategory;
+
+        Test.stopTest();
+
+        // The category should be left in a consistent state, not stuck with Sync__c = true
+        News_Category__c updatedCategory = [
+            SELECT Id, Sync__c
+            FROM News_Category__c
+            WHERE Id = :newCategory.Id
+        ];
+        Assert.areEqual(false, updatedCategory.Sync__c, 'Sync__c should be reset to false after a failed sync');
+
+        // A News_Sync_Error__c record should capture the failure for diagnosis
+        List<News_Sync_Error__c> errors = [
+            SELECT Id, News_Category__c, Page__c, Message__c
+            FROM News_Sync_Error__c
+            WHERE News_Category__c = :newCategory.Id
+        ];
+        Assert.areEqual(1, errors.size(), 'A sync error record should be created for the failed page');
+
+        // No articles should have been created from the failed callout
+        List<Article__c> articles = [
+            SELECT Id
+            FROM Article__c
+            WHERE News_Category__c = :newCategory.Id
+        ];
+        Assert.areEqual(0, articles.size(), 'No articles should be created when the API call fails');
+    }
+}
