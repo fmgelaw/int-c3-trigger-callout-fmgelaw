@@ -141,20 +141,13 @@ public class NewsCategoryQueueable implements Queueable, Database.AllowsCallouts
             // An empty current page always stops pagination, even if totalResults claims more remain -
             // the API's reported total can be inflated/inaccurate, so real data wins over metadata.
             Boolean currentPageHasArticles = !articlesToInsert.isEmpty();
-            Boolean morePagesRemain = currentPage < totalPages;
-            Boolean underPageCap = currentPage < MAX_PAGES;
-            if (underPageCap && currentPageHasArticles && morePagesRemain) {
-                // Not yet done - Pages__c is only persisted once the sync fully completes below,
-                // consistent with Last_Synced__c/Sync__c also only updating on that branch.
-                if (!Test.isRunningTest()) {
-                    System.enqueueJob(
-                        new NewsCategoryQueueable(category, currentPage + 1, remainingCategories)
-                            .withOriginalTransactionId(originalTransactionId)
-                    );
-                }
-            } else {
-                // All pages for this category are done - update page count, last synced date, and sync flag = false
-                updatedCategory.Pages__c = Math.min(totalPages, MAX_PAGES);
+            Boolean categoryDone = !hasMorePages(currentPage, totalPages, currentPageHasArticles);
+            if (categoryDone) {
+                // All pages for this category are done - update page count, last synced date, and sync flag = false.
+                // Pages__c records pages actually processed (pages that returned articles), not the
+                // totalResults-based estimate - an empty page ends the chain early and isn't counted.
+                // An intermediate page persists nothing - these finished-state fields are written together, once.
+                updatedCategory.Pages__c = currentPageHasArticles ? currentPage : currentPage - 1;
                 updatedCategory.Last_Synced__c = Datetime.now();
                 updatedCategory.Sync__c = false;
                 updateCategory(updatedCategory, currentPage);
@@ -165,6 +158,12 @@ public class NewsCategoryQueueable implements Queueable, Database.AllowsCallouts
                         new NewsCategoryQueueable(remainingCategories).withOriginalTransactionId(originalTransactionId)
                     );
                 }
+            } else if (!Test.isRunningTest()) {
+                // Not yet done - fetch the next page of this same category
+                System.enqueueJob(
+                    new NewsCategoryQueueable(category, currentPage + 1, remainingCategories)
+                        .withOriginalTransactionId(originalTransactionId)
+                );
             }
 
             Nebula.Logger.info(
@@ -220,6 +219,22 @@ public class NewsCategoryQueueable implements Queueable, Database.AllowsCallouts
         } finally {
             Nebula.Logger.saveLog();
         }
+    }
+
+    /**
+     * Decides whether this category has another page to fetch. An empty current page always
+     * stops pagination, even if totalResults claims more remain - the API's reported total can
+     * be inflated/inaccurate, so real data wins over metadata.
+     * @param currentPage The page just processed
+     * @param totalPages Page count estimated from the response's totalResults
+     * @param currentPageHasArticles Whether the page just processed returned any articles
+     * @return True if the next page of this category should be fetched
+     */
+    @TestVisible
+    private static Boolean hasMorePages(Integer currentPage, Integer totalPages, Boolean currentPageHasArticles) {
+        Boolean morePagesRemain = currentPage < totalPages;
+        Boolean underPageCap = currentPage < MAX_PAGES;
+        return underPageCap && currentPageHasArticles && morePagesRemain;
     }
 
     /**

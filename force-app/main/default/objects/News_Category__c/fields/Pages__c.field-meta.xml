@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Pages__c</fullName>
+    <description>Number of pages actually processed (pages that returned articles) in the last completed sync, capped at the queueable&apos;s MAX_PAGES. Not the page count estimated from the API&apos;s totalResults.</description>
     <externalId>false</externalId>
     <label>Pages</label>
     <precision>18</precision>
